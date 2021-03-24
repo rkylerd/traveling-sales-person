@@ -126,12 +126,17 @@ class TSPSolver:
 		bssf = None
 		start_time = time.time()
 		btsf_time = None
+		start_cities = [False] * ncities
 
 		while (time.time() - start_time) < time_allowance:
 			new_timer = time.time()
 			new_solution = None
-			# start from city random city
+			# start from a random city that hasn't been started from yet
 			city_idx = random.randint(0, len(cities)-1 )
+			while start_cities[city_idx]:
+				city_idx = random.randint(0, len(cities) - 1)
+			start_cities[city_idx] = True
+
 			route = [ cities[city_idx] ]
 			
 			remaining_cities = [ *cities[:city_idx], *cities[city_idx+1:] ]
@@ -188,8 +193,94 @@ class TSPSolver:
 	'''
 		
 	def fancy( self,time_allowance=60.0 ):
-		pass
-		
 
+		cities = self._scenario.getCities()
+		n = len(cities)
+		a = 1
+		b = 2
+		p = 0.2
+		ants = 25
+		max_iterations = 1000
+		pheromones = [[1] * n for _ in range(n)]
+		#ant_locations = [0]*ants
+		ant_cost = [0.0]*ants
+		ant_history = [[] for _ in range(ants)]
+		distances = [[cities[i].costTo(cities[j]) for j in range(n)] for i in range(n)]
+		iteration = 0
+		prob = [0.0]*n
+		BSSF = math.inf
+		BSSF_route = []
+		start_time = time.time()
+		while time.time() - start_time < time_allowance and iteration < max_iterations:
+			iteration += 1
+			bestAnt = -1
+			bestCost = math.inf
+			for k in range(ants):
+				i = random.randrange(0, n)
+				ant_history[k] = [i]
+				ant_cost[k] = 0
+				for r in range(n - 1):
+					sum = 0
+					for j in range(n):
+						if j in ant_history[k]:
+							prob[j] = 0
+						else:
+							dist = distances[i][j]
+							if dist == 0:
+								prob[j] = math.inf
+								sum += 1
+							elif dist < math.inf:
+								prob[j] = (pheromones[i][j] ** a) * ((1/dist) ** b)
+								sum += prob[j]
+							else:
+								prob[j] = 0
+					if sum == 0:
+						ant_cost[k] = math.inf
+						break
+					choice = random.random()
+					j = 0
+					while choice > 0:
+						choice -= prob[j] / sum
+						j += 1
+					ant_history[k].append(j-1)
+					ant_cost[k] += distances[i][j-1]
+					i = j - 1
+				if ant_cost[k] < math.inf:
+					cost = distances[ant_history[k][n-1]][ant_history[k][0]]
+					if cost < math.inf:
+						ant_cost[k] += cost
+					else:
+						ant_cost[k] = math.inf
+				if ant_cost[k] < bestCost:
+					bestAnt = k
+					bestCost = ant_cost[k]
+			if bestAnt != -1 and bestCost < BSSF:
+				BSSF = bestCost
+				BSSF_route = ant_history[bestAnt]
+				print("Iteration {}: {}".format(iteration, BSSF))
+			for i in range(n):
+				for j in range(n):
+					pheromones[i][j] *= (1 - p)
+			for k in range(ants):
+				if ant_cost[k] < math.inf:
+					for i in range(n):
+						pheromones[ant_history[k][i]][ant_history[k][i % n]] += (1 / ant_cost[k])
+		end_time = time.time()
+
+		route = []
+		for i in BSSF_route:
+			route.append(cities[i])
+		solution = TSPSolution(route)
+
+		results = {}
+		results['cost'] = BSSF
+		results['time'] = end_time - start_time
+		results['count'] = 1
+		results['soln'] = solution
+		results['max'] = iteration
+		results['total'] = None
+		results['pruned'] = None
+
+		return results
 
 
