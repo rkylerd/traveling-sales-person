@@ -215,18 +215,28 @@ class TSPSolver:
 			iteration += 1
 			bestAnt = -1
 			bestCost = math.inf
+			
+			# for every ant k
 			for k in range(ants):
+				# random starting city i
 				i = random.randrange(0, n)
 				ant_history[k] = [i]
 				ant_cost[k] = 0
-				for r in range(n - 1):
+				
+				# visit every city ( '_' is just a counter to ensure i get to be every city n )
+				for _ in range(n - 1):
+					
 					sum = 0
+					# look at each city to determind if reachable from i
 					for j in range(n):
+						# if ant k has already visited city j, don't visit j again
 						if j in ant_history[k]:
 							prob[j] = 0
 						else:
 							dist = distances[i][j]
+							 
 							if dist == 0:
+								# why not set the probability to 0 when trying to visit self?
 								prob[j] = math.inf
 								sum += 1
 							elif dist < math.inf:
@@ -234,9 +244,13 @@ class TSPSolver:
 								sum += prob[j]
 							else:
 								prob[j] = 0
+					# if no other cities are visitable from city i
 					if sum == 0:
 						ant_cost[k] = math.inf
 						break
+					
+					# the way we're randomly selecting a path from city i
+					# divide by SUMl ∈ Nki [τil(t)]α · [ηil]β
 					choice = random.random()
 					j = 0
 					while choice > 0:
@@ -244,9 +258,12 @@ class TSPSolver:
 						j += 1
 					ant_history[k].append(j-1)
 					ant_cost[k] += distances[i][j-1]
+					# next starting city
 					i = j - 1
+
 				if ant_cost[k] < math.inf:
 					cost = distances[ant_history[k][n-1]][ant_history[k][0]]
+					# Is the original city reachable from the last city?
 					if cost < math.inf:
 						ant_cost[k] += cost
 					else:
@@ -258,13 +275,16 @@ class TSPSolver:
 				BSSF = bestCost
 				BSSF_route = ant_history[bestAnt]
 				print("Iteration {}: {}".format(iteration, BSSF))
+
+			# evaporate pheromones levels before next iteration
 			for i in range(n):
 				for j in range(n):
 					pheromones[i][j] *= (1 - p)
-			for k in range(ants):
-				if ant_cost[k] < math.inf:
-					for i in range(n):
-						pheromones[ant_history[k][i]][ant_history[k][i % n]] += (1 / ant_cost[k])
+			
+			# In ACS only the global best ant is allowed
+			# 	to add pheromone after each iteration.
+			for i in BSSF_route:
+				pheromones[ BSSF_route[i] ][ BSSF_route[ (i+1) % len(BSSF_route) ] ] += (1 / BSSF)
 		end_time = time.time()
 
 		route = []
