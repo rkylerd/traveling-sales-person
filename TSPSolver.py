@@ -125,7 +125,7 @@ class TSPSolver:
 		count = 0
 		bssf = None
 		start_time = time.time()
-		btsf_time = None
+		bssf_time = None
 		start_cities = [False] * ncities
 		starting_cities_remaining = ncities
 
@@ -158,13 +158,13 @@ class TSPSolver:
 			count += 1
 			if new_solution.cost < math.inf and (not(bssf) or bssf.cost > new_solution.cost):
 				# Found a valid route
-				btsf_time = time.time() - new_timer
+				bssf_time = time.time() - new_timer
 				foundTour = True
 				bssf = new_solution
 
 		end_time = time.time()
 		results['cost'] = bssf.cost if foundTour else math.inf
-		results['time'] = btsf_time
+		results['time'] = bssf_time
 		results['count'] = count
 		results['soln'] = bssf
 		results['max'] = None
@@ -200,14 +200,18 @@ class TSPSolver:
 
 		cities = self._scenario.getCities()
 		n = len(cities)
+		# parameters (they usually have values between 0 and 1)
 		a = 1
 		b = 2
 		p = 0.2
 		q_not = .5
+		xi = p
+		t_not = .6
+
 		ants = 25
 		max_iterations = 1000
 		pheromones = [[1] * n for _ in range(n)]
-		#ant_locations = [0]*ants
+		
 		ant_cost = [0.0]*ants
 		ant_history = [[] for _ in range(ants)]
 		distances = [[cities[i].costTo(cities[j]) for j in range(n)] for i in range(n)]
@@ -215,12 +219,14 @@ class TSPSolver:
 		prob = [0.0]*n
 		BSSF = math.inf
 		BSSF_route = []
+		BSSF_time = None
+		count = 0
 		start_time = time.time()
 		while time.time() - start_time < time_allowance and iteration < max_iterations:
+			solution_start_time = time.time()
 			iteration += 1
 			bestAnt = -1
 			bestCost = math.inf
-			
 			# for every ant k
 			for k in range(ants):
 				# random starting city i
@@ -273,7 +279,7 @@ class TSPSolver:
 					ant_cost[k] += distances[i][j]
 
 					# ACS: evaporate pheromone level immediately after taking path i to j
-					pheromones[i][j] *= (1 - p)
+					pheromones[i][j] = (1 - xi) * pheromones[i][j] + xi * t_not
 
 					# set next starting city
 					i = j
@@ -288,16 +294,20 @@ class TSPSolver:
 				if ant_cost[k] < bestCost:
 					bestAnt = k
 					bestCost = ant_cost[k]
-			# if the best ant of all ants iterations found better than global BSSF 
-			if bestAnt != -1 and bestCost < BSSF:
+			# if the best ant of all ant iterations found better than global BSSF 
+			if bestAnt != -1:
+				count += 1
+				if bestCost < BSSF:
+				BSSF_time = time.time() - solution_start_time
 				BSSF = bestCost
 				BSSF_route = ant_history[bestAnt]
 				print("Iteration {}: {}".format(iteration, BSSF))
-					
+			
 			# ACS: only the global best ant is allowed
 			# 	to add pheromone after each iteration.
 			for i in BSSF_route:
-				pheromones[ BSSF_route[i] ][ BSSF_route[ (i+1) % len(BSSF_route) ] ] += (1 / BSSF)
+				current = pheromones[ BSSF_route[i] ][ BSSF_route[ (i+1) % len(BSSF_route) ] ] 
+				pheromones[ BSSF_route[i] ][ BSSF_route[ (i+1) % len(BSSF_route) ] ] = (1 - p) * current + p * (1 / BSSF)
 		end_time = time.time()
 
 		route = []
@@ -307,8 +317,8 @@ class TSPSolver:
 
 		results = {}
 		results['cost'] = BSSF
-		results['time'] = end_time - start_time
-		results['count'] = 1
+		results['time'] = BSSF_time
+		results['count'] = count
 		results['soln'] = solution
 		results['max'] = iteration
 		results['total'] = None
