@@ -127,14 +127,18 @@ class TSPSolver:
 		start_time = time.time()
 		btsf_time = None
 		start_cities = [False] * ncities
+		starting_cities_remaining = ncities
 
 		while (time.time() - start_time) < time_allowance:
 			new_timer = time.time()
 			new_solution = None
+			if starting_cities_remaining == 0:
+				break
 			# start from a random city that hasn't been started from yet
 			city_idx = random.randint(0, len(cities)-1 )
 			while start_cities[city_idx]:
 				city_idx = random.randint(0, len(cities) - 1)
+			starting_cities_remaining -= 1
 			start_cities[city_idx] = True
 
 			route = [ cities[city_idx] ]
@@ -225,18 +229,17 @@ class TSPSolver:
 				
 				# visit every city ( '_' is just a counter to ensure i get to be every city n )
 				for _ in range(n - 1):
-					
+					# sum of probabilities (used for randomly selecting the next city)
 					sum = 0
-					# look at each city to determind if reachable from i
+					# look at each city to determin if reachable from i
 					for j in range(n):
-						# if ant k has already visited city j, don't visit j again
+						# if ant k has already visited city j (or is at city j), don't visit j again
 						if j in ant_history[k]:
 							prob[j] = 0
 						else:
 							dist = distances[i][j]
-							 
+							
 							if dist == 0:
-								# why not set the probability to 0 when trying to visit self?
 								prob[j] = math.inf
 								sum += 1
 							elif dist < math.inf:
@@ -244,13 +247,12 @@ class TSPSolver:
 								sum += prob[j]
 							else:
 								prob[j] = 0
-					# if no other cities are visitable from city i
+					# try a new ant if no other cities are visitable from city i
 					if sum == 0:
 						ant_cost[k] = math.inf
 						break
 					
-					# the way we're randomly selecting a path from city i
-					# divide by SUMl ∈ Nki [τil(t)]α · [ηil]β
+					# cities with higher probability are more likely to cause choice to go below 0 
 					choice = random.random()
 					j = 0
 					while choice > 0:
@@ -258,12 +260,12 @@ class TSPSolver:
 						j += 1
 					ant_history[k].append(j-1)
 					ant_cost[k] += distances[i][j-1]
-					# next starting city
+					# set next starting city
 					i = j - 1
 
 				if ant_cost[k] < math.inf:
-					cost = distances[ant_history[k][n-1]][ant_history[k][0]]
 					# Is the original city reachable from the last city?
+					cost = distances[ant_history[k][n-1]][ant_history[k][0]]
 					if cost < math.inf:
 						ant_cost[k] += cost
 					else:
@@ -271,6 +273,7 @@ class TSPSolver:
 				if ant_cost[k] < bestCost:
 					bestAnt = k
 					bestCost = ant_cost[k]
+			# if the best ant of all ants iterations found better than global BSSF 
 			if bestAnt != -1 and bestCost < BSSF:
 				BSSF = bestCost
 				BSSF_route = ant_history[bestAnt]
