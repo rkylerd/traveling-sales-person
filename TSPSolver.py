@@ -203,6 +203,7 @@ class TSPSolver:
 		a = 1
 		b = 2
 		p = 0.2
+		q_not = .5
 		ants = 25
 		max_iterations = 1000
 		pheromones = [[1] * n for _ in range(n)]
@@ -252,16 +253,30 @@ class TSPSolver:
 						ant_cost[k] = math.inf
 						break
 					
-					# cities with higher probability are more likely to cause choice to go below 0 
-					choice = random.random()
-					j = 0
-					while choice > 0:
-						choice -= prob[j] / sum
-						j += 1
-					ant_history[k].append(j-1)
-					ant_cost[k] += distances[i][j-1]
+					# ACS: test whether or not to use tour construction (the most probable path) 
+					# 	or normal probabilistic path selection
+					if random.random() <=  q_not:
+						most_probable_path = 0
+						for j in range(1,n):
+							if prob[j] > prob[most_probable_path]:
+								most_probable_path = j
+						j = most_probable_path
+					else :
+						# cities with higher probability are more likely to cause choice to go below 0 
+						choice = random.random()
+						j = -1
+						while choice >= 0:
+							j += 1
+							choice -= prob[j] / sum
+
+					ant_history[k].append(j)
+					ant_cost[k] += distances[i][j]
+
+					# ACS: evaporate pheromone level immediately after taking path i to j
+					pheromones[i][j] *= (1 - p)
+
 					# set next starting city
-					i = j - 1
+					i = j
 
 				if ant_cost[k] < math.inf:
 					# Is the original city reachable from the last city?
@@ -278,13 +293,8 @@ class TSPSolver:
 				BSSF = bestCost
 				BSSF_route = ant_history[bestAnt]
 				print("Iteration {}: {}".format(iteration, BSSF))
-
-			# evaporate pheromones levels before next iteration
-			for i in range(n):
-				for j in range(n):
-					pheromones[i][j] *= (1 - p)
-			
-			# In ACS only the global best ant is allowed
+					
+			# ACS: only the global best ant is allowed
 			# 	to add pheromone after each iteration.
 			for i in BSSF_route:
 				pheromones[ BSSF_route[i] ][ BSSF_route[ (i+1) % len(BSSF_route) ] ] += (1 / BSSF)
