@@ -298,10 +298,10 @@ class TSPSolver:
 			if bestAnt != -1:
 				count += 1
 				if bestCost < BSSF:
-				BSSF_time = time.time() - solution_start_time
-				BSSF = bestCost
-				BSSF_route = ant_history[bestAnt]
-				print("Iteration {}: {}".format(iteration, BSSF))
+					BSSF_time = time.time() - solution_start_time
+					BSSF = bestCost
+					BSSF_route = ant_history[bestAnt]
+					print("Iteration {}: {}".format(iteration, BSSF))
 			
 			# ACS: only the global best ant is allowed
 			# 	to add pheromone after each iteration.
