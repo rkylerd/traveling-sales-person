@@ -10,7 +10,7 @@ else:
 
 
 
-
+import copy
 import time
 import numpy as np
 from TSPClasses import *
@@ -177,74 +177,106 @@ class TSPSolver:
 		results = {}
 		cities = self._scenario.getCities()
 		ncities = len(cities)
-		start_time = time.time()
-
+		bbStartTime = time.time()
+		
+		# Get the initial state
 		matrix = self.createCostMatrix(cities, ncities)
 		initialCost = self.reduceMatrix(matrix, ncities)
+		# matrix = [[math.inf,7,3,12],[3,math.inf,6,14],[5,8,math.inf,6],[9,3,5,math.inf]]
 		
-		Q, bounds = self.makeQueue(cities, matrix, ncities, initialCost)
+		# Create a priority queue of the first level in the tree of cities
+		Q, bounds = self.makeQueue(cities, copy.deepcopy(matrix), ncities, initialCost)
 
-		foundTour = False
-		count = 0
-		self.bssf = None
+		self.bpsf = None
 		btsf_time = None
+		bssf = None
 		self.bssfCost = math.inf
+		self.bbSolutionCount = 0
+		self.bbSolutionTimer = time.time()
 
-		while (time.time() - start_time) < time_allowance:
-			solution_timer = time.time()
-			
-			while len(Q):
-				nextCity = Q.pop(0)
-				lBoundOfNextCity = bounds.pop(0)
+		# while first-level states still exist
+		while len(Q):
+			if (time.time() - bbStartTime) >= time_allowance:
+				break
 
-				if lBoundOfNextCity < self.bssfCost:
-					indexOfCity = self.stringToIndex(Q[0]._name)
-					remainingCityIndeces = [ *[n for n in range(1,indexOfCity)], *[n for n in range(indexOfCity+1,ncities)]]
-					pathSoFar = [0, indexOfCity]
-					costOfSolution, path = self.findSolution(matrix, cities, pathSoFar, remainingCityIndeces, bounds[0])
+			nextCity = Q.pop(0)
+			lBoundOfNextCity = bounds.pop(0)
 
-			new_solution = TSPSolution(route)
-			count += 1
-			if new_solution.cost < math.inf and (not(bssf) or bssf.cost > new_solution.cost):
-				# Found a valid route
-				btsf_time = time.time() - solution_timer
-				foundTour = True
-				bssf = new_solution
+			# always check bound before trying a path (ordered by lowest bounds)
+			if lBoundOfNextCity < self.bssfCost:
+				indexOfCity = self.stringToIndex(nextCity._name)
+				remainingCityIndeces = [ *[n for n in range(1,indexOfCity)], *[n for n in range(indexOfCity+1,ncities)]]
+				
+				# We always start from city 0
+				pathSoFar = [0, indexOfCity]
+				localMatrix = copy.deepcopy(matrix)
+				self.markPathVisited(localMatrix, ncities, 0, indexOfCity)
+				self.findSolution(copy.deepcopy(localMatrix), cities, ncities, [*pathSoFar], [*remainingCityIndeces], lBoundOfNextCity, bbStartTime, time_allowance)
+		route = []		
+		for i in self.bpsf:
+			route.append(cities[i])
+
+		bssf = TSPSolution(route)
 
 		end_time = time.time()
-		results['cost'] = bssf.cost if foundTour else math.inf
-		results['time'] = btsf_time
-		results['count'] = count
+		results['cost'] = bssf.cost if self.bssfCost < math.inf else math.inf
+		results['time'] = self.bbSolutionTimer
+		results['count'] = self.bbSolutionCount
 		results['soln'] = bssf
 		results['max'] = None
 		results['total'] = None
 		results['pruned'] = None
 		return results
 
-	def findSolution(self, matrix, cities, pathSoFar, remainingCityIndeces, parentLowerBound):
-		
-		for index in remainingCityIndeces:
-			lb = self.getLowerBound(matrix,parentLowerBound, pathSoFar[-1], index)
-			if lBoundOfNextCity < self.bssfCost:
-				self.findSolution(matrix, cities, [*pathSoFar, index], remainingCityIndeces.pop(index), lb)
+	def markPathVisited(self, matrix, n, row, col):
+		self.markDirectionVisited(matrix, n, row)
+		self.markDirectionVisited(matrix, n, col, False)
+		matrix[col][row] = None
 
-		if ( len(remainingCityIndeces) == 0 and parentLowerBound < self.bssfCost ):
-			self.bssfCost = parentLowerBound
-			self.bssf = pathSoFar
+	def findSolution(self, matrix, cities, n, pathSoFar, remainingCityIndeces, parentLowerBound, bbStartTime, timeAllowance):
+		remainingCityIndecesInDepth = [*remainingCityIndeces]
+		indexInOriginalRemainingCitiesIndeces = -1
+		if len(remainingCityIndeces) == 1:
+			print(pathSoFar, " --- ", remainingCityIndeces)
+		while len(remainingCityIndeces):
+			if (time.time() - bbStartTime) >= timeAllowance:
+				return
+			localMatrix = copy.deepcopy(matrix)
+			indexInOriginalRemainingCitiesIndeces += 1
+			index = remainingCityIndeces.pop(0)
 
+			lb = self.getLowerBound(localMatrix, parentLowerBound, n, pathSoFar[-1], index, True, True)
+			if lb == math.inf:
+				continue
+
+			newPathSoFar = [*pathSoFar, index]
+			if len(newPathSoFar) == n and lb < self.bssfCost:
+				self.bbBstsf = time.time() - self.bbSolutionTimer
+				self.bbSolutionCount += 1
+				self.bssfCost = lb
+				self.bpsf = newPathSoFar
+				return
+
+			if self.bpsf == None or lb < self.bssfCost:
+				self.findSolution(copy.deepcopy(localMatrix), cities, n, [*newPathSoFar], [ *remainingCityIndecesInDepth[:indexInOriginalRemainingCitiesIndeces], *remainingCityIndecesInDepth[indexInOriginalRemainingCitiesIndeces+1:]], lb, bbStartTime, timeAllowance)
+			
 	def makeQueue(self, cities, matrix, n, initialCost):
 		bounds = []
 		Q = []
 		row = 0
 
+		# Start at column 1 because the initial state always begins at city 0
 		for col in range(1,n):
-			lb = self.getLowerBound(matrix, initialCost, row, col)
+			lb = self.getLowerBound(copy.deepcopy(matrix), initialCost, n, row, col)
 			
+			# If on the first city, add it to the queue and move on to the next city
 			if len(bounds) == 0:
 				bounds.append(lb)
 				Q.append(cities[col])
 				continue
-
+			
+			# To make the queue a priority queue, 
+			# cities with smaller bounds are placed at the front of the queue
 			indexOfNextSmallerThanMe = -1
 			for idx, bound in enumerate(bounds):
 				if bound > lb:
@@ -252,26 +284,29 @@ class TSPSolver:
 				# the new lb needs will be placed after the current bound
 				indexOfNextSmallerThanMe += 1 
 			
+			# Insert the new lower bound after the final element with a lower bound (the next smallest)
 			i = 1 + indexOfNextSmallerThanMe
-			if i == len(bounds):
-				print('what happens when we try to insert here?')
-			
-			bounds.insert(i, bound)
+			bounds.insert(i, lb)
 			Q.insert(i, cities[col])
 
 		return Q, bounds
 
-	def getLowerBound(self, matrix, parentLowerBound, row, col):
-		optimizationCost = self.reduceMatrix(matrix)
-		return parentLowerBound + matrix[row][col] + optimizationCost
+	def getLowerBound(self, matrix, parentLowerBound, n, row, col, cancelBeforeReduction=True, ignoreRowCol=False):
+		costAtCoordinate = matrix[row][col]
+		if cancelBeforeReduction:
+			# set all values in the row and column to None (so we don't visit them again) 
+			self.markPathVisited(matrix, n, row, col)
+		optimizationCost = self.reduceMatrix(matrix, n, ignoreRowCol, row, col)
+		return parentLowerBound + costAtCoordinate + optimizationCost
 
-	def reduceMatrix(self, matrix, n):
+	def reduceMatrix(self, matrix, n, ignoreRowCol=False, ignoreRow=None, ignoreCol=None):
 		costToReduce = 0
 
 		for row in range(n):
-			rowSmallestValue = self.getSmallestElementInDirection(matrix, n, row)
-			if (rowSmallestValue == math.inf):
-				print('rowSmallestValue == math.inf')
+			if ignoreRowCol and row == ignoreRow:
+				continue
+
+			rowSmallestValue = self.getSmallestElementInDirection(matrix, n, row, True, ignoreCol)
 
 			# 0 < rowSmallestValue < infinity
 			if rowSmallestValue and rowSmallestValue < math.inf:
@@ -279,7 +314,10 @@ class TSPSolver:
 			costToReduce += rowSmallestValue
 		
 		for col in range(n):
-			colSmallestValue = self.getSmallestElementInDirection(matrix, n, col, False)
+			if ignoreRowCol and col == ignoreCol:
+				continue
+
+			colSmallestValue = self.getSmallestElementInDirection(matrix, n, col, False, ignoreRow)
 			# 0 < colSmallestValue < infinity
 			if colSmallestValue and colSmallestValue < math.inf:
 				self.reduceElementsInDirection(matrix, n, colSmallestValue, col, False)
@@ -287,30 +325,49 @@ class TSPSolver:
 		
 		return costToReduce
 
-	def getSmallestElementInDirection(self, matrix, n, index, isRow = True):
-		n = len(matrix[index])
-		smallestValue = math.inf
+	def getSmallestElementInDirection(self, matrix, n, index, isRow, ignoreRowCol=None):
 
+		smallestValue = math.inf
+		flag = False
 		if isRow:	
 			for col in range(n):
+				if ignoreRowCol != None and col == ignoreRowCol:
+					continue
+				if matrix[index][col] == None:
+					continue
+				flag = True
 				if matrix[index][col] < smallestValue:
 					smallestValue = matrix[index][col]
 		else:
 			for row in range(n):
+				if ignoreRowCol != None and row == ignoreRowCol:
+					continue
+				if matrix[row][index] == None:
+					continue
+				flag = True
 				if matrix[row][index] < smallestValue:
 					smallestValue = matrix[row][index]
-		return smallestValue
+		return smallestValue if flag else 0
 
 	def reduceElementsInDirection(self, matrix, n, reducer, index, isRow = True):
 
 		if isRow:	
 			for col in range(n):
-				if matrix[index][col] < math.inf:
+				if matrix[index][col] != None and matrix[index][col] < math.inf:
 					matrix[index][col] -= reducer 
 		else:
 			for row in range(n):
-				if matrix[row][index] < math.inf:
+				if matrix[row][index] != None and matrix[row][index] < math.inf:
 					matrix[row][index] -= reducer
+
+	def markDirectionVisited(self, matrix, n, index, isRow = True):
+		
+		if isRow:	
+			for col in range(n):
+				matrix[index][col] = None 
+		else:
+			for row in range(n):
+				matrix[row][index] = None
 
 	# Space complexity - O(n^2) for 2D matrix
 	# Time complexity - O(n^2) to create the 2D matrix
