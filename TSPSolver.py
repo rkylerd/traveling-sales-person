@@ -26,6 +26,16 @@ class TSPSolver:
 	def setupWithScenario( self, scenario ):
 		self._scenario = scenario
 
+	def constructResults( self, cost, solutionTime, count, soln, maxQueueSize = None, total = None, pruned = None):
+		results = {}
+		results['cost'] = cost
+		results['time'] = solutionTime if solutionTime != None else time.time() 
+		results['count'] = count
+		results['soln'] = soln
+		results['max'] = maxQueueSize
+		results['total'] = total
+		results['pruned'] = pruned
+		return results
 
 	''' <summary>
 		This is the entry point for the default solver
@@ -98,7 +108,7 @@ class TSPSolver:
 
 	def getIndexOfClosestCity( self, all_cities, remaining_cities, city_idx):
 		city = remaining_cities[0]
-		closest_city_idx = self.stringToIndex(city._name)
+		closest_city_idx = city._index
 		city_idx_to_pop = 0
 
 		if len(remaining_cities) == 1:
@@ -112,12 +122,12 @@ class TSPSolver:
 			if shortest_path > all_cities[city_idx].costTo(city):
 				shortest_path = all_cities[city_idx].costTo(city)
 				# index of the city in the complete list, NOT in the remaining list of cities
-				closest_city_idx = self.stringToIndex(city._name)
+				closest_city_idx = city._index
 				city_idx_to_pop = idx
 
 		return closest_city_idx, city_idx_to_pop
 
-	def greedy( self,time_allowance=60.0 ):
+	def greedy( self,time_allowance=60.0, quitAfterFirstSolution=False ):
 		results = {}
 		cities = self._scenario.getCities()
 		ncities = len(cities)
@@ -125,13 +135,25 @@ class TSPSolver:
 		count = 0
 		bssf = None
 		start_time = time.time()
-		btsf_time = None
+		bssf_time = None
+		start_cities = [False] * ncities
+		starting_cities_remaining = ncities
 
 		while (time.time() - start_time) < time_allowance:
 			solution_timer = time.time()
 			new_solution = None
-			# start from city random city
+			# quiteAfterFirstSolution is to give the branchAndBound algorithm an initial bssf
+			if bssf and quitAfterFirstSolution:
+				break 
+			if starting_cities_remaining == 0:
+				break
+			# start from a random city that hasn't been started from yet
 			city_idx = random.randint(0, len(cities)-1 )
+			while start_cities[city_idx]:
+				city_idx = random.randint(0, len(cities) - 1)
+			starting_cities_remaining -= 1
+			start_cities[city_idx] = True
+
 			route = [ cities[city_idx] ]
 			
 			remaining_cities = [ *cities[:city_idx], *cities[city_idx+1:] ]
@@ -149,19 +171,15 @@ class TSPSolver:
 			count += 1
 			if new_solution.cost < math.inf and (not(bssf) or bssf.cost > new_solution.cost):
 				# Found a valid route
-				btsf_time = time.time() - solution_timer
+				bssf_time = time.time() - solution_timer
 				foundTour = True
 				bssf = new_solution
 
-		end_time = time.time()
-		results['cost'] = bssf.cost if foundTour else math.inf
-		results['time'] = btsf_time
-		results['count'] = count
-		results['soln'] = bssf
-		results['max'] = None
-		results['total'] = None
-		results['pruned'] = None
-		return results
+		return self.constructResults(
+			bssf.cost if foundTour else math.inf, 
+			bssf_time, 
+			count, 
+			bssf)
 	
 	
 	''' <summary>
@@ -174,59 +192,62 @@ class TSPSolver:
 	'''
 		
 	def branchAndBound( self, time_allowance=60.0 ):
-		results = {}
 		cities = self._scenario.getCities()
 		ncities = len(cities)
 		bbStartTime = time.time()
+
+		greedySolution = self.greedy(time_allowance, True)
+		# Start over with new random seed
+		if not(greedySolution['soln']):
+			return self.constructResults(math.inf, None, 0, None)
+
+		self.bpsf = [city._index for city in greedySolution['soln'].route]
+		self.bssfCost = greedySolution['cost']
+		self.bbBstsf = time_allowance
+		self.bbSolutionCount = 0
+		self.bbSolutionTimer = time.time()
+		self.pruneCount = 0
+		self.maxQueueSize = 0
+		self.totalStates = 0
 		
 		# Get the initial state
 		matrix = self.createCostMatrix(cities, ncities)
 		initialCost = self.reduceMatrix(matrix, ncities)
-		# matrix = [[math.inf,7,3,12],[3,math.inf,6,14],[5,8,math.inf,6],[9,3,5,math.inf]]
 		
 		# Create a priority queue of the first level in the tree of cities
-		Q, bounds = self.makeQueue(cities, copy.deepcopy(matrix), ncities, initialCost)
-
-		self.bpsf = None
-		btsf_time = None
-		bssf = None
-		self.bssfCost = math.inf
-		self.bbSolutionCount = 0
-		self.bbSolutionTimer = time.time()
-
+		Q, bounds, matrices = self.makeQueue(cities, copy.deepcopy(matrix), ncities, initialCost)
 		# while first-level states still exist
 		while len(Q):
 			if (time.time() - bbStartTime) >= time_allowance:
 				break
-
+			self.totalStates += 1
 			nextCity = Q.pop(0)
 			lBoundOfNextCity = bounds.pop(0)
 
 			# always check bound before trying a path (ordered by lowest bounds)
 			if lBoundOfNextCity < self.bssfCost:
-				indexOfCity = self.stringToIndex(nextCity._name)
+				indexOfCity = nextCity._index
 				remainingCityIndeces = [ *[n for n in range(1,indexOfCity)], *[n for n in range(indexOfCity+1,ncities)]]
 				
-				# We always start from city 0
+				# Always start from city 0
 				pathSoFar = [0, indexOfCity]
-				localMatrix = copy.deepcopy(matrix)
-				self.markPathVisited(localMatrix, ncities, 0, indexOfCity)
-				self.findSolution(copy.deepcopy(localMatrix), cities, ncities, [*pathSoFar], [*remainingCityIndeces], lBoundOfNextCity, bbStartTime, time_allowance)
+				localMatrix = copy.deepcopy(matrices[indexOfCity-1])
+				self.findSolution(localMatrix, cities, ncities, [*pathSoFar], [*remainingCityIndeces], lBoundOfNextCity, bbStartTime, time_allowance)
 		route = []		
 		for i in self.bpsf:
 			route.append(cities[i])
 
 		bssf = TSPSolution(route)
 
-		end_time = time.time()
-		results['cost'] = bssf.cost if self.bssfCost < math.inf else math.inf
-		results['time'] = self.bbSolutionTimer
-		results['count'] = self.bbSolutionCount
-		results['soln'] = bssf
-		results['max'] = None
-		results['total'] = None
-		results['pruned'] = None
-		return results
+		return self.constructResults(
+			self.bssfCost, 
+			self.bbBstsf, 
+			self.bbSolutionCount, 
+			bssf, 
+			self.maxQueueSize, 
+			self.totalStates, 
+			self.pruneCount)
+
 
 	def markPathVisited(self, matrix, n, row, col):
 		self.markDirectionVisited(matrix, n, row)
@@ -236,43 +257,46 @@ class TSPSolver:
 	def findSolution(self, matrix, cities, n, pathSoFar, remainingCityIndeces, parentLowerBound, bbStartTime, timeAllowance):
 		remainingCityIndecesInDepth = [*remainingCityIndeces]
 		indexInOriginalRemainingCitiesIndeces = -1
-		if len(remainingCityIndeces) == 1:
-			print(pathSoFar, " --- ", remainingCityIndeces)
+
 		while len(remainingCityIndeces):
 			if (time.time() - bbStartTime) >= timeAllowance:
 				return
+			self.totalStates += 1
 			localMatrix = copy.deepcopy(matrix)
 			indexInOriginalRemainingCitiesIndeces += 1
 			index = remainingCityIndeces.pop(0)
 
-			lb = self.getLowerBound(localMatrix, parentLowerBound, n, pathSoFar[-1], index, True, True)
-			if lb == math.inf:
-				continue
-
-			newPathSoFar = [*pathSoFar, index]
-			if len(newPathSoFar) == n and lb < self.bssfCost:
-				self.bbBstsf = time.time() - self.bbSolutionTimer
-				self.bbSolutionCount += 1
-				self.bssfCost = lb
-				self.bpsf = newPathSoFar
-				return
-
-			if self.bpsf == None or lb < self.bssfCost:
-				self.findSolution(copy.deepcopy(localMatrix), cities, n, [*newPathSoFar], [ *remainingCityIndecesInDepth[:indexInOriginalRemainingCitiesIndeces], *remainingCityIndecesInDepth[indexInOriginalRemainingCitiesIndeces+1:]], lb, bbStartTime, timeAllowance)
+			lb = self.getLowerBound(localMatrix, parentLowerBound, n, pathSoFar[-1], index)
 			
+			if lb < self.bssfCost:
+				newPathSoFar = [*pathSoFar, index]
+
+				if len(newPathSoFar) == n:
+					self.bbBstsf = time.time() - self.bbSolutionTimer
+					self.bbSolutionCount += 1
+					self.bssfCost = lb
+					self.bpsf = newPathSoFar
+				else:
+					self.findSolution(copy.deepcopy(localMatrix), cities, n, [*newPathSoFar], [ *remainingCityIndecesInDepth[:indexInOriginalRemainingCitiesIndeces], *remainingCityIndecesInDepth[indexInOriginalRemainingCitiesIndeces+1:]], lb, bbStartTime, timeAllowance)
+			else:
+				self.pruneCount += 1
+
 	def makeQueue(self, cities, matrix, n, initialCost):
 		bounds = []
 		Q = []
 		row = 0
+		matrices = []
 
 		# Start at column 1 because the initial state always begins at city 0
 		for col in range(1,n):
-			lb = self.getLowerBound(copy.deepcopy(matrix), initialCost, n, row, col)
+			firstLevelMatrix = copy.deepcopy(matrix)
+			lb = self.getLowerBound(firstLevelMatrix, initialCost, n, row, col)
 			
 			# If on the first city, add it to the queue and move on to the next city
 			if len(bounds) == 0:
 				bounds.append(lb)
 				Q.append(cities[col])
+				matrices.append(firstLevelMatrix)
 				continue
 			
 			# To make the queue a priority queue, 
@@ -288,12 +312,12 @@ class TSPSolver:
 			i = 1 + indexOfNextSmallerThanMe
 			bounds.insert(i, lb)
 			Q.insert(i, cities[col])
+			matrices.append(firstLevelMatrix)
+		return Q, bounds, matrices
 
-		return Q, bounds
-
-	def getLowerBound(self, matrix, parentLowerBound, n, row, col, cancelBeforeReduction=True, ignoreRowCol=False):
+	def getLowerBound(self, matrix, parentLowerBound, n, row, col, ignoreRowCol=True, markNoneBeforeReduction=True):
 		costAtCoordinate = matrix[row][col]
-		if cancelBeforeReduction:
+		if markNoneBeforeReduction:
 			# set all values in the row and column to None (so we don't visit them again) 
 			self.markPathVisited(matrix, n, row, col)
 		optimizationCost = self.reduceMatrix(matrix, n, ignoreRowCol, row, col)
@@ -325,7 +349,7 @@ class TSPSolver:
 		
 		return costToReduce
 
-	def getSmallestElementInDirection(self, matrix, n, index, isRow, ignoreRowCol=None):
+	def getSmallestElementInDirection(self, matrix, n, index, isRow, ignoreRowCol=None, defaultSmallestValue=0):
 
 		smallestValue = math.inf
 		flag = False
@@ -347,7 +371,8 @@ class TSPSolver:
 				flag = True
 				if matrix[row][index] < smallestValue:
 					smallestValue = matrix[row][index]
-		return smallestValue if flag else 0
+
+		return smallestValue if flag else defaultSmallestValue
 
 	def reduceElementsInDirection(self, matrix, n, reducer, index, isRow = True):
 
@@ -393,8 +418,132 @@ class TSPSolver:
 	'''
 		
 	def fancy( self,time_allowance=60.0 ):
-		pass
-		
 
+		cities = self._scenario.getCities()
+		n = len(cities)
+		# parameters (they usually have values between 0 and 1)
+		a = 1
+		b = 2
+		p = 0.2
+		q_not = .5
+		xi = p
+		t_not = .6
+
+		ants = 25
+		max_iterations = 1000
+		pheromones = [[1] * n for _ in range(n)]
+		
+		ant_cost = [0.0]*ants
+		ant_history = [[] for _ in range(ants)]
+		distances = [[cities[i].costTo(cities[j]) for j in range(n)] for i in range(n)]
+		iteration = 0
+		prob = [0.0]*n
+		BSSF = math.inf
+		BSSF_route = []
+		BSSF_time = None
+		count = 0
+		start_time = time.time()
+		while time.time() - start_time < time_allowance and iteration < max_iterations:
+			solution_start_time = time.time()
+			iteration += 1
+			bestAnt = -1
+			bestCost = math.inf
+			# for every ant k
+			for k in range(ants):
+				# random starting city i
+				i = random.randrange(0, n)
+				ant_history[k] = [i]
+				ant_cost[k] = 0
+				
+				# visit every city ( '_' is just a counter to ensure i get to be every city n )
+				for _ in range(n - 1):
+					# sum of probabilities (used for randomly selecting the next city)
+					sum = 0
+					# look at each city to determin if reachable from i
+					for j in range(n):
+						# if ant k has already visited city j (or is at city j), don't visit j again
+						if j in ant_history[k]:
+							prob[j] = 0
+						else:
+							dist = distances[i][j]
+							
+							if dist == 0:
+								prob[j] = math.inf
+								sum += 1
+							elif dist < math.inf:
+								prob[j] = (pheromones[i][j] ** a) * ((1/dist) ** b)
+								sum += prob[j]
+							else:
+								prob[j] = 0
+					# try a new ant if no other cities are visitable from city i
+					if sum == 0:
+						ant_cost[k] = math.inf
+						break
+					
+					# ACS: test whether or not to use tour construction (the most probable path) 
+					# 	or normal probabilistic path selection
+					if random.random() <=  q_not:
+						most_probable_path = 0
+						for j in range(1,n):
+							if prob[j] > prob[most_probable_path]:
+								most_probable_path = j
+						j = most_probable_path
+					else :
+						# cities with higher probability are more likely to cause choice to go below 0 
+						choice = random.random()
+						j = -1
+						while choice >= 0:
+							j += 1
+							choice -= prob[j] / sum
+
+					ant_history[k].append(j)
+					ant_cost[k] += distances[i][j]
+
+					# ACS: evaporate pheromone level immediately after taking path i to j
+					pheromones[i][j] = (1 - xi) * pheromones[i][j] + xi * t_not
+
+					# set next starting city
+					i = j
+
+				if ant_cost[k] < math.inf:
+					# Is the original city reachable from the last city?
+					cost = distances[ant_history[k][n-1]][ant_history[k][0]]
+					if cost < math.inf:
+						ant_cost[k] += cost
+					else:
+						ant_cost[k] = math.inf
+				if ant_cost[k] < bestCost:
+					bestAnt = k
+					bestCost = ant_cost[k]
+			# if the best ant of all ant iterations found better than global BSSF 
+			if bestAnt != -1:
+				count += 1
+				if bestCost < BSSF:
+					BSSF_time = time.time() - solution_start_time
+					BSSF = bestCost
+					BSSF_route = ant_history[bestAnt]
+					print("Iteration {}: {}".format(iteration, BSSF))
+			
+			# ACS: only the global best ant is allowed
+			# 	to add pheromone after each iteration.
+			for i in BSSF_route:
+				current = pheromones[ BSSF_route[i] ][ BSSF_route[ (i+1) % len(BSSF_route) ] ] 
+				pheromones[ BSSF_route[i] ][ BSSF_route[ (i+1) % len(BSSF_route) ] ] = (1 - p) * current + p * (1 / BSSF)
+
+		route = []
+		for i in BSSF_route:
+			route.append(cities[i])
+		solution = TSPSolution(route)
+
+		results = {}
+		results['cost'] = BSSF
+		results['time'] = BSSF_time
+		results['count'] = count
+		results['soln'] = solution
+		results['max'] = iteration
+		results['total'] = None
+		results['pruned'] = None
+
+		return results
 
 
