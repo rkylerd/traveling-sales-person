@@ -194,109 +194,152 @@ class TSPSolver:
 	def branchAndBound( self, time_allowance=60.0 ):
 		cities = self._scenario.getCities()
 		ncities = len(cities)
-		bbStartTime = time.time()
+		self.bbStartTime = time.time()
+		self.timeAllowance = time_allowance
 
-		greedySolution = self.greedy(time_allowance, True)
-		# Start over with new random seed
+		# Calculate an initial bssf using the greedy algorithm
+		greedySolution = self.greedy(time_allowance)
+
+		# If not solution could be found using greedy, start over with a new random seed
 		if not(greedySolution['soln']):
 			return self.constructResults(math.inf, None, 0, None)
 
+		# Initialize reporting stats; use the applicable greedy stats as defaults
 		self.bpsf = [city._index for city in greedySolution['soln'].route]
 		self.bssfCost = greedySolution['cost']
 		self.bbBstsf = time_allowance
 		self.bbSolutionCount = 0
-		self.bbSolutionTimer = time.time()
 		self.pruneCount = 0
+		self.runningQueueSize = 0
 		self.maxQueueSize = 0
 		self.totalStates = 0
-		
+
 		# Get the initial state
 		matrix = self.createCostMatrix(cities, ncities)
 		initialCost = self.reduceMatrix(matrix, ncities)
-		
-		# Create a priority queue of the first level in the tree of cities
-		Q, bounds, matrices = self.makeQueue(cities, copy.deepcopy(matrix), ncities, initialCost)
-		# while first-level states still exist
-		while len(Q):
-			if (time.time() - bbStartTime) >= time_allowance:
-				break
-			self.totalStates += 1
-			nextCity = Q.pop(0)
-			lBoundOfNextCity = bounds.pop(0)
 
-			# always check bound before trying a path (ordered by lowest bounds)
-			if lBoundOfNextCity < self.bssfCost:
-				indexOfCity = nextCity._index
-				remainingCityIndeces = [ *[n for n in range(1,indexOfCity)], *[n for n in range(indexOfCity+1,ncities)]]
-				
-				# Always start from city 0
-				pathSoFar = [0, indexOfCity]
-				localMatrix = copy.deepcopy(matrices[indexOfCity-1])
-				self.findSolution(localMatrix, cities, ncities, [*pathSoFar], [*remainingCityIndeces], lBoundOfNextCity, bbStartTime, time_allowance)
+		# Always start from city 0
+		pathSoFar = [0]
+		remainingCityIndeces = [n for n in range(1,ncities)]
+
+		self.prioritizeByBounds(matrix, cities, ncities, [*pathSoFar], [*remainingCityIndeces], initialCost)
+
+		# Create a TSP solution using the path made from branch and bound/greedy
 		route = []		
 		for i in self.bpsf:
 			route.append(cities[i])
-
 		bssf = TSPSolution(route)
 
+		# if the time ran out before the algorithm found a better solution,
+		# report the time_allowance as the time taken along with the greedy algorithm's bssf
+		bbEndTime = time.time() - self.bbStartTime
+		
 		return self.constructResults(
 			self.bssfCost, 
-			self.bbBstsf, 
+			bbEndTime if self.bbBstsf > bbEndTime else self.bbBstsf,
 			self.bbSolutionCount, 
 			bssf, 
 			self.maxQueueSize, 
 			self.totalStates, 
 			self.pruneCount)
 
+	def prioritizeByBounds(self, matrix, cities, n, pathSoFar, remainingCityIndeces, parentLowerBound, depth = 1):
+		# Create a priority queue of the current level in the tree of cities
+		parentCityIndex = pathSoFar[-1]
+		Q, bounds, matrices = self.makeQueue(cities, copy.deepcopy(matrix), n, parentCityIndex, parentLowerBound, remainingCityIndeces)
 
-	def markPathVisited(self, matrix, n, row, col):
-		self.markDirectionVisited(matrix, n, row)
-		self.markDirectionVisited(matrix, n, col, False)
-		matrix[col][row] = None
+		# Create a copy of the remainingIndeces so that we don't lose information
+		# as we remove from remainingIndeces
+		remainingCityIndecesAtLevel = [*remainingCityIndeces]
+		
+		self.runningQueueSize += len(Q)
+		if self.maxQueueSize < self.runningQueueSize:
+			self.maxQueueSize = self.runningQueueSize
+		
+		while len(Q):
+			if (time.time() - self.bbStartTime) >= self.timeAllowance:
+				break
+			self.totalStates += 1
+			nextCity = Q.pop(0)
+			lBoundOfNextCity = bounds.pop(0)
+			currentCityIndex = remainingCityIndecesAtLevel.index(nextCity._index)
 
-	def findSolution(self, matrix, cities, n, pathSoFar, remainingCityIndeces, parentLowerBound, bbStartTime, timeAllowance):
-		remainingCityIndecesInDepth = [*remainingCityIndeces]
-		indexInOriginalRemainingCitiesIndeces = -1
+			# Should we prune this branch and its children?
+			if lBoundOfNextCity < self.bssfCost:
+				newRemainingCityIndeces = [ *remainingCityIndecesAtLevel[:currentCityIndex], *remainingCityIndecesAtLevel[currentCityIndex+1:]]
+				indexOfCity = nextCity._index
+				
+				newPathSoFar = [*pathSoFar, indexOfCity]
+				localMatrix = copy.deepcopy(matrices.pop(0))
+				
+				# After experimenting with various numbers, 
+				# .9 or slightly higher seems to be a good threshold 
+				# for deciding whether to drill down or look at the breadth of the level 
+				ratio = (lBoundOfNextCity / self.bssfCost)
+				if ratio < .9:
+					self.prioritizeByBounds(localMatrix, cities, n, [*newPathSoFar], [*newRemainingCityIndeces], lBoundOfNextCity, depth+1)
+				else:
+					self.drillDown(localMatrix, cities, n, [*newPathSoFar], [*newRemainingCityIndeces], lBoundOfNextCity)
+			else:
+				self.pruneCount += 1
+			
+			# consider a problem solved once all of its subproblems have been solved
+			self.runningQueueSize -= 1
 
+	def drillDown(self, matrix, cities, n, pathSoFar, remainingCityIndeces, parentLowerBound):
+		remainingCityIndecesAtLevel = [*remainingCityIndeces]
+		currentCityIndex = -1
+
+		self.runningQueueSize += len(remainingCityIndeces)
+		if self.maxQueueSize < self.runningQueueSize:
+			self.maxQueueSize = self.runningQueueSize
+
+		# use the first of the remaining cities as the next path to 'drill down' on
 		while len(remainingCityIndeces):
-			if (time.time() - bbStartTime) >= timeAllowance:
+			if (time.time() - self.bbStartTime) >= self.timeAllowance:
 				return
 			self.totalStates += 1
-			localMatrix = copy.deepcopy(matrix)
-			indexInOriginalRemainingCitiesIndeces += 1
-			index = remainingCityIndeces.pop(0)
 
+			localMatrix = copy.deepcopy(matrix)
+			currentCityIndex += 1
+
+			index = remainingCityIndeces.pop(0)
 			lb = self.getLowerBound(localMatrix, parentLowerBound, n, pathSoFar[-1], index)
 			
+			# Should we prune this branch and its children?
 			if lb < self.bssfCost:
 				newPathSoFar = [*pathSoFar, index]
 
+				# Have we arrived at a complete path yet?
 				if len(newPathSoFar) == n:
-					self.bbBstsf = time.time() - self.bbSolutionTimer
+					self.bbBstsf = time.time() - self.bbStartTime
 					self.bbSolutionCount += 1
 					self.bssfCost = lb
 					self.bpsf = newPathSoFar
 				else:
-					self.findSolution(copy.deepcopy(localMatrix), cities, n, [*newPathSoFar], [ *remainingCityIndecesInDepth[:indexInOriginalRemainingCitiesIndeces], *remainingCityIndecesInDepth[indexInOriginalRemainingCitiesIndeces+1:]], lb, bbStartTime, timeAllowance)
+					newRemainingCityIndeces = [ *remainingCityIndecesAtLevel[:currentCityIndex], *remainingCityIndecesAtLevel[currentCityIndex+1:]]
+					self.drillDown(copy.deepcopy(localMatrix), cities, n, [*newPathSoFar], newRemainingCityIndeces, lb)
 			else:
 				self.pruneCount += 1
-
-	def makeQueue(self, cities, matrix, n, initialCost):
+			
+			# consider a problem solved once all of its subproblems have been solved
+			self.runningQueueSize -= 1
+	
+	def makeQueue(self, cities, matrix, n, row, initialCost, numberRange):
 		bounds = []
 		Q = []
-		row = 0
 		matrices = []
 
-		# Start at column 1 because the initial state always begins at city 0
-		for col in range(1,n):
-			firstLevelMatrix = copy.deepcopy(matrix)
-			lb = self.getLowerBound(firstLevelMatrix, initialCost, n, row, col)
+		# numberRange intentionally skips the already-visited cities
+		for col in numberRange:
+			nLevelMatrix = copy.deepcopy(matrix)
+			lb = self.getLowerBound(nLevelMatrix, initialCost, n, row, col)
 			
 			# If on the first city, add it to the queue and move on to the next city
 			if len(bounds) == 0:
 				bounds.append(lb)
 				Q.append(cities[col])
-				matrices.append(firstLevelMatrix)
+				matrices.append(nLevelMatrix)
 				continue
 			
 			# To make the queue a priority queue, 
@@ -312,12 +355,28 @@ class TSPSolver:
 			i = 1 + indexOfNextSmallerThanMe
 			bounds.insert(i, lb)
 			Q.insert(i, cities[col])
-			matrices.append(firstLevelMatrix)
+			matrices.insert(i, nLevelMatrix)
+
 		return Q, bounds, matrices
 
-	def getLowerBound(self, matrix, parentLowerBound, n, row, col, ignoreRowCol=True, markNoneBeforeReduction=True):
+	# mark all paths along the row and column as None
+	# Then mark the inverse of the coordinate (the path backward) as None too
+	def markPathVisited(self, matrix, n, row, col):
+		self.markDirectionVisited(matrix, n, row)
+		self.markDirectionVisited(matrix, n, col, False)
+		matrix[col][row] = None
+
+	def markDirectionVisited(self, matrix, n, index, isRow = True):
+		if isRow:	
+			for col in range(n):
+				matrix[index][col] = None 
+		else:
+			for row in range(n):
+				matrix[row][index] = None
+
+	def getLowerBound(self, matrix, parentLowerBound, n, row, col, ignoreRowCol=True, markVisitedBeforeReduction=True):
 		costAtCoordinate = matrix[row][col]
-		if markNoneBeforeReduction:
+		if markVisitedBeforeReduction:
 			# set all values in the row and column to None (so we don't visit them again) 
 			self.markPathVisited(matrix, n, row, col)
 		optimizationCost = self.reduceMatrix(matrix, n, ignoreRowCol, row, col)
@@ -342,6 +401,7 @@ class TSPSolver:
 				continue
 
 			colSmallestValue = self.getSmallestElementInDirection(matrix, n, col, False, ignoreRow)
+
 			# 0 < colSmallestValue < infinity
 			if colSmallestValue and colSmallestValue < math.inf:
 				self.reduceElementsInDirection(matrix, n, colSmallestValue, col, False)
@@ -384,15 +444,6 @@ class TSPSolver:
 			for row in range(n):
 				if matrix[row][index] != None and matrix[row][index] < math.inf:
 					matrix[row][index] -= reducer
-
-	def markDirectionVisited(self, matrix, n, index, isRow = True):
-		
-		if isRow:	
-			for col in range(n):
-				matrix[index][col] = None 
-		else:
-			for row in range(n):
-				matrix[row][index] = None
 
 	# Space complexity - O(n^2) for 2D matrix
 	# Time complexity - O(n^2) to create the 2D matrix
