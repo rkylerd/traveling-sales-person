@@ -128,7 +128,7 @@ class TSPSolver:
 		btsf_time = None
 		start_cities = [False] * ncities
 
-		while (time.time() - start_time) < time_allowance:
+		while (time.time() - start_time) < time_allowance and count < ncities:
 			new_timer = time.time()
 			new_solution = None
 			# start from a random city that hasn't been started from yet
@@ -197,74 +197,140 @@ class TSPSolver:
 		cities = self._scenario.getCities()
 		n = len(cities)
 		a = 1
-		b = 2
+		b = 1
 		p = 0.2
-		ants = 25
+		ants = n
 		max_iterations = 1000
-		pheromones = [[1] * n for _ in range(n)]
-		#ant_locations = [0]*ants
-		ant_cost = [0.0]*ants
-		ant_history = [[] for _ in range(ants)]
+		q = 0.5
+		best_frequency = 0.25
 		distances = [[cities[i].costTo(cities[j]) for j in range(n)] for i in range(n)]
-		iteration = 0
-		prob = [0.0]*n
 		BSSF = math.inf
 		BSSF_route = []
+
+		# Set initial tour cost using the greedy algorithm
+		for i in range(n): # check every possible greedy solution (each starting city)
+			route = [i]
+			cost = 0
+			current = i
+			for _ in range(n - 1): # Build path
+				next = -1
+				next_cost = math.inf
+				for j in range(n):
+					if not j in route and distances[current][j] < next_cost: # Get shortest path
+						next = j
+						next_cost = distances[current][j]
+				if next == -1: # No path exists
+					cost = math.inf
+					break
+				route.append(next)
+				current = next
+				cost += next_cost
+			cost += distances[route[-1]][route[0]]
+			if cost < math.inf and cost < BSSF:
+				BSSF_route = route
+				BSSF = cost
+
+		t_max = 1 / (p * BSSF)
+		t_min = t_max / (2 * n)
+		pheromones = [[t_max] * n for _ in range(n)]
+
+		count = 0
+
+		# ant_cost = [0.0] * ants
+		# ant_history = [[] for _ in range(ants)]
+		iteration = 0
+		prob = [0.0]*n
 		start_time = time.time()
-		while time.time() - start_time < time_allowance and iteration < max_iterations:
+		last_improvement = 0 # iteration number of last improvement
+		# Begin iterating
+		while time.time() - start_time < time_allowance and iteration - last_improvement < max_iterations:
 			iteration += 1
-			bestAnt = -1
-			bestCost = math.inf
+			iterationBestCost = math.inf
+			iterationBestRoute = []
+			# iterate through each ant
 			for k in range(ants):
+				# random starting city
 				i = random.randrange(0, n)
-				ant_history[k] = [i]
-				ant_cost[k] = 0
-				for r in range(n - 1):
+				route = [i]
+				ant_cost = 0
+
+				# Build route city by city
+				for _ in range(n - 1):
 					sum = 0
+					max_index = -1
+					max_value = 0
+					# Calculate the probability of traveling to each city
 					for j in range(n):
-						if j in ant_history[k]:
+						if j in route: # Can't revisit a city
 							prob[j] = 0
 						else:
 							dist = distances[i][j]
-							if dist == 0:
+							if dist == 0: # Avoid division by zero
 								prob[j] = math.inf
 								sum += 1
+								max_value = math.inf
+								max_index = j
 							elif dist < math.inf:
+								# Set the probability with a combination of the pheromone level and the distance
 								prob[j] = (pheromones[i][j] ** a) * ((1/dist) ** b)
 								sum += prob[j]
-							else:
+								if prob[j] > max_value:
+									max_index = j
+									max_value = prob[j]
+							else: # Don't travel infinite distances
 								prob[j] = 0
-					if sum == 0:
-						ant_cost[k] = math.inf
+
+					if sum == 0: # No valid paths were found
+						ant_cost = math.inf
 						break
-					choice = random.random()
-					j = 0
-					while choice > 0:
-						choice -= prob[j] / sum
-						j += 1
-					ant_history[k].append(j-1)
-					ant_cost[k] += distances[i][j-1]
-					i = j - 1
-				if ant_cost[k] < math.inf:
-					cost = distances[ant_history[k][n-1]][ant_history[k][0]]
-					if cost < math.inf:
-						ant_cost[k] += cost
+
+					if random.random() < q: # Randomly use the best option or choose probabilistically
+						j = max_index
 					else:
-						ant_cost[k] = math.inf
-				if ant_cost[k] < bestCost:
-					bestAnt = k
-					bestCost = ant_cost[k]
-			if bestAnt != -1 and bestCost < BSSF:
-				BSSF = bestCost
-				BSSF_route = ant_history[bestAnt]
+						choice = random.random()
+						j = -1
+						while choice >= 0:
+							j += 1
+							choice -= prob[j] / sum
+
+					# Add to route
+					route.append(j)
+					ant_cost += distances[i][j]
+					i = j
+
+				# Finish route and update iteration best if it is a better route
+				if ant_cost < math.inf:
+					ant_cost += distances[route[-1]][route[0]]
+				if ant_cost < iterationBestCost:
+					iterationBestRoute = route
+					iterationBestCost = ant_cost
+			# if the best ant was better than the global best solution, update the global best solution
+			if iterationBestCost < BSSF:
+				BSSF = iterationBestCost
+				BSSF_route = iterationBestRoute
 				print("Iteration {}: {}".format(iteration, BSSF))
+				last_improvement = iteration
+				t_max = 1 / (p * BSSF)
+				t_min = t_max / (2 * n)
+				count += 1
+			# Reduce all edges
 			for i in range(n):
 				for j in range(n):
 					pheromones[i][j] *= (1 - p)
-			for k in range(ants):
-				if ant_cost[k] < math.inf:
+					if pheromones[i][j] < t_min:
+						pheromones[i][j] = t_min
+			# Add pheromones to each edge with either the iteration best or global best solution
+			if random.random() < best_frequency:
+				if BSSF < math.inf:
 					for i in range(n):
-						pheromones[ant_history[k][i]][ant_history[k][i % n]] += (1 / ant_cost[k])
+						pheromones[BSSF_route[i]][BSSF_route[(i + 1) % n]] += 1 / BSSF
+						if pheromones[BSSF_route[i]][BSSF_route[(i + 1) % n]] > t_max:
+							pheromones[BSSF_route[i]][BSSF_route[(i + 1) % n]] = t_max
+			elif iterationBestCost < math.inf:
+				for i in range(n):
+					pheromones[iterationBestRoute[i]][iterationBestRoute[(i + 1) % n]] += 1 / iterationBestCost
+					if pheromones[iterationBestRoute[i]][iterationBestRoute[(i + 1) % n]] > t_max:
+						pheromones[iterationBestRoute[i]][iterationBestRoute[(i + 1) % n]] = t_max
 		end_time = time.time()
 
 		route = []
@@ -275,7 +341,7 @@ class TSPSolver:
 		results = {}
 		results['cost'] = BSSF
 		results['time'] = end_time - start_time
-		results['count'] = 1
+		results['count'] = count
 		results['soln'] = solution
 		results['max'] = iteration
 		results['total'] = None
