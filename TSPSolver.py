@@ -125,16 +125,20 @@ class TSPSolver:
 		count = 0
 		bssf = None
 		start_time = time.time()
-		btsf_time = None
+		bssf_time = None
 		start_cities = [False] * ncities
+		starting_cities_remaining = ncities
 
 		while (time.time() - start_time) < time_allowance:
 			new_timer = time.time()
 			new_solution = None
+			if starting_cities_remaining == 0:
+				break
 			# start from a random city that hasn't been started from yet
 			city_idx = random.randint(0, len(cities)-1 )
 			while start_cities[city_idx]:
 				city_idx = random.randint(0, len(cities) - 1)
+			starting_cities_remaining -= 1
 			start_cities[city_idx] = True
 
 			route = [ cities[city_idx] ]
@@ -154,13 +158,13 @@ class TSPSolver:
 			count += 1
 			if new_solution.cost < math.inf and (not(bssf) or bssf.cost > new_solution.cost):
 				# Found a valid route
-				btsf_time = time.time() - new_timer
+				bssf_time = time.time() - new_timer
 				foundTour = True
 				bssf = new_solution
 
 		end_time = time.time()
 		results['cost'] = bssf.cost if foundTour else math.inf
-		results['time'] = btsf_time
+		results['time'] = bssf_time
 		results['count'] = count
 		results['soln'] = bssf
 		results['max'] = None
@@ -196,13 +200,18 @@ class TSPSolver:
 
 		cities = self._scenario.getCities()
 		n = len(cities)
+		# parameters (they usually have values between 0 and 1)
 		a = 1
 		b = 2
 		p = 0.2
+		q_not = .5
+		xi = p
+		t_not = .6
+
 		ants = 25
 		max_iterations = 1000
 		pheromones = [[1] * n for _ in range(n)]
-		#ant_locations = [0]*ants
+		
 		ant_cost = [0.0]*ants
 		ant_history = [[] for _ in range(ants)]
 		distances = [[cities[i].costTo(cities[j]) for j in range(n)] for i in range(n)]
@@ -210,22 +219,33 @@ class TSPSolver:
 		prob = [0.0]*n
 		BSSF = math.inf
 		BSSF_route = []
+		BSSF_time = None
+		count = 0
 		start_time = time.time()
 		while time.time() - start_time < time_allowance and iteration < max_iterations:
+			solution_start_time = time.time()
 			iteration += 1
 			bestAnt = -1
 			bestCost = math.inf
+			# for every ant k
 			for k in range(ants):
+				# random starting city i
 				i = random.randrange(0, n)
 				ant_history[k] = [i]
 				ant_cost[k] = 0
-				for r in range(n - 1):
+				
+				# visit every city ( '_' is just a counter to ensure i get to be every city n )
+				for _ in range(n - 1):
+					# sum of probabilities (used for randomly selecting the next city)
 					sum = 0
+					# look at each city to determin if reachable from i
 					for j in range(n):
+						# if ant k has already visited city j (or is at city j), don't visit j again
 						if j in ant_history[k]:
 							prob[j] = 0
 						else:
 							dist = distances[i][j]
+							
 							if dist == 0:
 								prob[j] = math.inf
 								sum += 1
@@ -234,18 +254,38 @@ class TSPSolver:
 								sum += prob[j]
 							else:
 								prob[j] = 0
+					# try a new ant if no other cities are visitable from city i
 					if sum == 0:
 						ant_cost[k] = math.inf
 						break
-					choice = random.random()
-					j = 0
-					while choice > 0:
-						choice -= prob[j] / sum
-						j += 1
-					ant_history[k].append(j-1)
-					ant_cost[k] += distances[i][j-1]
-					i = j - 1
+					
+					# ACS: test whether or not to use tour construction (the most probable path) 
+					# 	or normal probabilistic path selection
+					if random.random() <=  q_not:
+						most_probable_path = 0
+						for j in range(1,n):
+							if prob[j] > prob[most_probable_path]:
+								most_probable_path = j
+						j = most_probable_path
+					else :
+						# cities with higher probability are more likely to cause choice to go below 0 
+						choice = random.random()
+						j = -1
+						while choice >= 0:
+							j += 1
+							choice -= prob[j] / sum
+
+					ant_history[k].append(j)
+					ant_cost[k] += distances[i][j]
+
+					# ACS: evaporate pheromone level immediately after taking path i to j
+					pheromones[i][j] = (1 - xi) * pheromones[i][j] + xi * t_not
+
+					# set next starting city
+					i = j
+
 				if ant_cost[k] < math.inf:
+					# Is the original city reachable from the last city?
 					cost = distances[ant_history[k][n-1]][ant_history[k][0]]
 					if cost < math.inf:
 						ant_cost[k] += cost
@@ -254,17 +294,20 @@ class TSPSolver:
 				if ant_cost[k] < bestCost:
 					bestAnt = k
 					bestCost = ant_cost[k]
-			if bestAnt != -1 and bestCost < BSSF:
-				BSSF = bestCost
-				BSSF_route = ant_history[bestAnt]
-				print("Iteration {}: {}".format(iteration, BSSF))
-			for i in range(n):
-				for j in range(n):
-					pheromones[i][j] *= (1 - p)
-			for k in range(ants):
-				if ant_cost[k] < math.inf:
-					for i in range(n):
-						pheromones[ant_history[k][i]][ant_history[k][i % n]] += (1 / ant_cost[k])
+			# if the best ant of all ant iterations found better than global BSSF 
+			if bestAnt != -1:
+				count += 1
+				if bestCost < BSSF:
+					BSSF_time = time.time() - solution_start_time
+					BSSF = bestCost
+					BSSF_route = ant_history[bestAnt]
+					print("Iteration {}: {}".format(iteration, BSSF))
+			
+			# ACS: only the global best ant is allowed
+			# 	to add pheromone after each iteration.
+			for i in BSSF_route:
+				current = pheromones[ BSSF_route[i] ][ BSSF_route[ (i+1) % len(BSSF_route) ] ] 
+				pheromones[ BSSF_route[i] ][ BSSF_route[ (i+1) % len(BSSF_route) ] ] = (1 - p) * current + p * (1 / BSSF)
 		end_time = time.time()
 
 		route = []
@@ -274,8 +317,8 @@ class TSPSolver:
 
 		results = {}
 		results['cost'] = BSSF
-		results['time'] = end_time - start_time
-		results['count'] = 1
+		results['time'] = BSSF_time
+		results['count'] = count
 		results['soln'] = solution
 		results['max'] = iteration
 		results['total'] = None
