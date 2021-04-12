@@ -81,24 +81,9 @@ class TSPSolver:
 		algorithm</returns> 
 	'''
 
-	# stringToIndex() turns a city name of 'A' to index 0, for example
-	# changes 'AA' to 26
-	# This function is useful because the cities are ordered by city name
-	def stringToIndex(self, s):
-		returnIdx = 0
-		# For all leading characters 
-		# (in the string 'ABY', 'AB' are the leading characters)
-		for idx in range(len(s)-1):
-			# We don't want to multiply by 0, so use 64 NOT 65
-			# 1 = 'A' - 64 
-			pos = ord(s[idx]) - 64 
-			returnIdx += 26 * pos
-
-		return returnIdx + ord(s[-1])-65
-
 	def getIndexOfClosestCity( self, all_cities, remaining_cities, city_idx):
 		city = remaining_cities[0]
-		closest_city_idx = self.stringToIndex(city._name)
+		closest_city_idx = city._index
 		city_idx_to_pop = 0
 
 		if len(remaining_cities) == 1:
@@ -112,12 +97,12 @@ class TSPSolver:
 			if shortest_path > all_cities[city_idx].costTo(city):
 				shortest_path = all_cities[city_idx].costTo(city)
 				# index of the city in the complete list, NOT in the remaining list of cities
-				closest_city_idx = self.stringToIndex(city._name)
+				closest_city_idx = city._index
 				city_idx_to_pop = idx
 
 		return closest_city_idx, city_idx_to_pop
 
-	def greedy( self,time_allowance=60.0 ):
+	def greedy( self,time_allowance=60.0, quitAfterFirstSolution=False ):
 		results = {}
 		cities = self._scenario.getCities()
 		ncities = len(cities)
@@ -125,20 +110,21 @@ class TSPSolver:
 		count = 0
 		bssf = None
 		start_time = time.time()
-		btsf_time = None
-		start_cities = [False] * ncities
+		bssf_time = None
+		remaining_starting_cities = [i for i in range(ncities)]
 
-		while (time.time() - start_time) < time_allowance and count < ncities:
-			new_timer = time.time()
+		while (time.time() - start_time) < time_allowance:
+			solution_timer = time.time()
 			new_solution = None
-			# start from a random city that hasn't been started from yet
-			city_idx = random.randint(0, len(cities)-1 )
-			while start_cities[city_idx]:
-				city_idx = random.randint(0, len(cities) - 1)
-			start_cities[city_idx] = True
+			# quiteAfterFirstSolution is to give the branchAndBound algorithm an initial bssf
+			if bssf and quitAfterFirstSolution:
+				break 
+			if len(remaining_starting_cities) == 0:
+				break
 
+			# start from a city that hasn't been started from yet
+			city_idx = remaining_starting_cities.pop(0)
 			route = [ cities[city_idx] ]
-			
 			remaining_cities = [ *cities[:city_idx], *cities[city_idx+1:] ]
 			
 			while len(remaining_cities) > 0:
@@ -154,13 +140,12 @@ class TSPSolver:
 			count += 1
 			if new_solution.cost < math.inf and (not(bssf) or bssf.cost > new_solution.cost):
 				# Found a valid route
-				btsf_time = time.time() - new_timer
+				bssf_time = time.time() - solution_timer
 				foundTour = True
 				bssf = new_solution
 
-		end_time = time.time()
 		results['cost'] = bssf.cost if foundTour else math.inf
-		results['time'] = btsf_time
+		results['time'] = bssf_time
 		results['count'] = count
 		results['soln'] = bssf
 		results['max'] = None
@@ -204,31 +189,11 @@ class TSPSolver:
 		q = 0.5
 		best_frequency = 0.25
 		distances = [[cities[i].costTo(cities[j]) for j in range(n)] for i in range(n)]
-		BSSF = math.inf
-		BSSF_route = []
-
+		
 		# Set initial tour cost using the greedy algorithm
-		for i in range(n): # check every possible greedy solution (each starting city)
-			route = [i]
-			cost = 0
-			current = i
-			for _ in range(n - 1): # Build path
-				next = -1
-				next_cost = math.inf
-				for j in range(n):
-					if not j in route and distances[current][j] < next_cost: # Get shortest path
-						next = j
-						next_cost = distances[current][j]
-				if next == -1: # No path exists
-					cost = math.inf
-					break
-				route.append(next)
-				current = next
-				cost += next_cost
-			cost += distances[route[-1]][route[0]]
-			if cost < math.inf and cost < BSSF:
-				BSSF_route = route
-				BSSF = cost
+		greedySolution = self.greedy()
+		BSSF = greedySolution['cost']
+		BSSF_route = [city._index for city in greedySolution['soln'].route] if BSSF < math.inf else []
 
 		t_max = 1 / (p * BSSF)
 		t_min = t_max / (2 * n)
