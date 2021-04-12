@@ -136,8 +136,7 @@ class TSPSolver:
 		bssf = None
 		start_time = time.time()
 		bssf_time = None
-		start_cities = [False] * ncities
-		starting_cities_remaining = ncities
+		remaining_starting_cities = [i for i in range(ncities)]
 
 		while (time.time() - start_time) < time_allowance:
 			solution_timer = time.time()
@@ -145,17 +144,12 @@ class TSPSolver:
 			# quiteAfterFirstSolution is to give the branchAndBound algorithm an initial bssf
 			if bssf and quitAfterFirstSolution:
 				break 
-			if starting_cities_remaining == 0:
+			if len(remaining_starting_cities) == 0:
 				break
-			# start from a random city that hasn't been started from yet
-			city_idx = random.randint(0, len(cities)-1 )
-			while start_cities[city_idx]:
-				city_idx = random.randint(0, len(cities) - 1)
-			starting_cities_remaining -= 1
-			start_cities[city_idx] = True
 
+			# start from a city that hasn't been started from yet
+			city_idx = remaining_starting_cities.pop(0)
 			route = [ cities[city_idx] ]
-			
 			remaining_cities = [ *cities[:city_idx], *cities[city_idx+1:] ]
 			
 			while len(remaining_cities) > 0:
