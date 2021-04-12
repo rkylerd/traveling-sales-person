@@ -190,7 +190,8 @@ class TSPSolver:
 		not include the initial BSSF), the best solution found, and three more ints: 
 		max queue size, total number of states created, and number of pruned states.</returns> 
 	'''
-		
+	
+	# O(r) represents the number of remaining cities (it's indicitave of the tree depth)
 	def branchAndBound( self, time_allowance=60.0 ):
 		cities = self._scenario.getCities()
 		ncities = len(cities)
@@ -198,9 +199,10 @@ class TSPSolver:
 		self.timeAllowance = time_allowance
 
 		# Calculate an initial bssf using the greedy algorithm
+		# O(n^2) time complexity, O(n) space complexity 
 		greedySolution = self.greedy(time_allowance)
 
-		# If not solution could be found using greedy, start over with a new random seed
+		# If no initial solution could be found using greedy, start over with a new random seed
 		if not(greedySolution['soln']):
 			return self.constructResults(math.inf, None, 0, None)
 
@@ -214,18 +216,24 @@ class TSPSolver:
 		self.maxQueueSize = 0
 		self.totalStates = 0
 
-		# Get the initial state
+		# O(n^2) for both time and space complexity to crreate the n^2 cost matrix
 		matrix = self.createCostMatrix(cities, ncities)
+		
+		# Get the initial state
+		# O(n^2) for both time and space complexity to reduce
 		initialCost = self.reduceMatrix(matrix, ncities)
 
 		# Always start from city 0
 		pathSoFar = [0]
+		# O(r) space complexity (basically n at this point)
 		remainingCityIndeces = [n for n in range(1,ncities)]
 
+		# O(r * n^2) time and space complexity
 		self.prioritizeByBounds(matrix, cities, ncities, [*pathSoFar], [*remainingCityIndeces], initialCost)
 
 		# Create a TSP solution using the path made from branch and bound/greedy
-		route = []		
+		route = []	
+		# O(n) time and space complexity 
 		for i in self.bpsf:
 			route.append(cities[i])
 		bssf = TSPSolution(route)
@@ -243,29 +251,40 @@ class TSPSolver:
 			self.totalStates, 
 			self.pruneCount)
 
+	# r represents the number of remaining cities (or the depth of the tree)
 	def prioritizeByBounds(self, matrix, cities, n, pathSoFar, remainingCityIndeces, parentLowerBound, depth = 1):
 		# Create a priority queue of the current level in the tree of cities
 		parentCityIndex = pathSoFar[-1]
+		# O(r * n^2) time complexity to makeQueue() (or to reduce each of the r matrices)  
+		# Q and bounds have O(r) space complexity
+		# matrices has O(r * n^2)space complexity 
 		Q, bounds, matrices = self.makeQueue(cities, copy.deepcopy(matrix), n, parentCityIndex, parentLowerBound, remainingCityIndeces)
 
+		# O(r) space complexity
 		# Create a copy of the remainingIndeces so that we don't lose information
 		# as we remove from remainingIndeces
 		remainingCityIndecesAtLevel = [*remainingCityIndeces]
 		
+		# keep track of the max queue size for reporting at the end
 		self.runningQueueSize += len(Q)
 		if self.maxQueueSize < self.runningQueueSize:
 			self.maxQueueSize = self.runningQueueSize
 		
+		# O(r) time complexity to go through the Q * O(n^2) to drillDown or compare bounds at next level
 		while len(Q):
+			# stop if the timer ended
 			if (time.time() - self.bbStartTime) >= self.timeAllowance:
+				self.bbBstsf = self.timeAllowance
 				break
 			self.totalStates += 1
 			nextCity = Q.pop(0)
 			lBoundOfNextCity = bounds.pop(0)
+			# O(n) time complexity to find the index of an element in the list
 			currentCityIndex = remainingCityIndecesAtLevel.index(nextCity._index)
 
 			# Should we prune this branch and its children?
 			if lBoundOfNextCity < self.bssfCost:
+				# O(r) space complexity
 				newRemainingCityIndeces = [ *remainingCityIndecesAtLevel[:currentCityIndex], *remainingCityIndecesAtLevel[currentCityIndex+1:]]
 				indexOfCity = nextCity._index
 				
@@ -277,8 +296,10 @@ class TSPSolver:
 				# for deciding whether to drill down or look at the breadth of the level 
 				ratio = (lBoundOfNextCity / self.bssfCost)
 				if ratio < .9:
+					# O(n^2) time and space (don't include r because it's already accounted for)
 					self.prioritizeByBounds(localMatrix, cities, n, [*newPathSoFar], [*newRemainingCityIndeces], lBoundOfNextCity, depth+1)
 				else:
+					# O(n^2) time and space (don't include r because it's already accounted for)
 					self.drillDown(localMatrix, cities, n, [*newPathSoFar], [*newRemainingCityIndeces], lBoundOfNextCity)
 			else:
 				self.pruneCount += 1
@@ -286,17 +307,27 @@ class TSPSolver:
 			# consider a problem solved once all of its subproblems have been solved
 			self.runningQueueSize -= 1
 
+	# O(r * n^2) time complexity to go through the remaining cities and find the lower bound for each city
+	# O(n^2) space complexity to store and work with the cost matrix 
 	def drillDown(self, matrix, cities, n, pathSoFar, remainingCityIndeces, parentLowerBound):
 		remainingCityIndecesAtLevel = [*remainingCityIndeces]
 		currentCityIndex = -1
 
+		# Keep track of the max queue size for reporting at the end 
 		self.runningQueueSize += len(remainingCityIndeces)
 		if self.maxQueueSize < self.runningQueueSize:
 			self.maxQueueSize = self.runningQueueSize
 
 		# use the first of the remaining cities as the next path to 'drill down' on
+
+		# O(r * n^2) to get the lower bound and reduce the matrix for each remaining city
+		# Use (r) instead of an extra O(n) to iterate through the remaining cities
+		#  because the remaining cities reduces with each call and over the whole algorithm
+		#  we never go through all n inside drillDown  
 		while len(remainingCityIndeces):
+			# Stop if the time is up
 			if (time.time() - self.bbStartTime) >= self.timeAllowance:
+				self.bbBstsf = self.timeAllowance
 				return
 			self.totalStates += 1
 
@@ -304,20 +335,24 @@ class TSPSolver:
 			currentCityIndex += 1
 
 			index = remainingCityIndeces.pop(0)
+			# O(n^2) to getLowerBound()
 			lb = self.getLowerBound(localMatrix, parentLowerBound, n, pathSoFar[-1], index)
-			
+			    
 			# Should we prune this branch and its children?
 			if lb < self.bssfCost:
 				newPathSoFar = [*pathSoFar, index]
 
 				# Have we arrived at a complete path yet?
 				if len(newPathSoFar) == n:
-					self.bbBstsf = time.time() - self.bbStartTime
-					self.bbSolutionCount += 1
-					self.bssfCost = lb
-					self.bpsf = newPathSoFar
+					# Can we return to the initial city?
+					if cities[index].costTo(cities[pathSoFar[0]]) < math.inf:
+						self.bbBstsf = time.time() - self.bbStartTime
+						self.bbSolutionCount += 1
+						self.bssfCost = lb
+						self.bpsf = newPathSoFar
 				else:
 					newRemainingCityIndeces = [ *remainingCityIndecesAtLevel[:currentCityIndex], *remainingCityIndecesAtLevel[currentCityIndex+1:]]
+					# O(n^2) work and O(n^2) space complexity
 					self.drillDown(copy.deepcopy(localMatrix), cities, n, [*newPathSoFar], newRemainingCityIndeces, lb)
 			else:
 				self.pruneCount += 1
@@ -325,13 +360,19 @@ class TSPSolver:
 			# consider a problem solved once all of its subproblems have been solved
 			self.runningQueueSize -= 1
 	
-	def makeQueue(self, cities, matrix, n, row, initialCost, numberRange):
+	# r represent the number of remaining cities, which decreases as we drill deeper in the tree
+	# O(r * n^2) time complexity to get the lowerBound for each column in the row
+	# O(r * n^2) space complexity to store r matrices of size n^2 
+	def makeQueue(self, cities, matrix, n, row, initialCost, remainingCities):
+		# the first two lists have O(n) space complexity
 		bounds = []
 		Q = []
+		# O(r * n^2) space complexity
 		matrices = []
 
-		# numberRange intentionally skips the already-visited cities
-		for col in numberRange:
+		# skip the already-visited cities
+		# O(r) to iterate through remainingCities * O(n^2) time to getLowerBound()
+		for col in remainingCities:
 			nLevelMatrix = copy.deepcopy(matrix)
 			lb = self.getLowerBound(nLevelMatrix, initialCost, n, row, col)
 			
@@ -342,6 +383,7 @@ class TSPSolver:
 				matrices.append(nLevelMatrix)
 				continue
 			
+			# O(n) to iterate through the bounds
 			# To make the queue a priority queue, 
 			# cities with smaller bounds are placed at the front of the queue
 			indexOfNextSmallerThanMe = -1
@@ -359,14 +401,18 @@ class TSPSolver:
 
 		return Q, bounds, matrices
 
-	# mark all paths along the row and column as None
-	# Then mark the inverse of the coordinate (the path backward) as None too
+	# O(n) time complexity - to mark all paths along the row and column as None
+	# O(n^2) space complexity - to store and work with the n^2 matrix
 	def markPathVisited(self, matrix, n, row, col):
+		# O(n) to set each element in the row as None 
 		self.markDirectionVisited(matrix, n, row)
+		# O(n) to set each element in the col as None
 		self.markDirectionVisited(matrix, n, col, False)
 		matrix[col][row] = None
 
 	def markDirectionVisited(self, matrix, n, index, isRow = True):
+		# O(n) time complexity to go through each element in the row/col of length n
+		# O(n^2) space complexity to store and work with the n^2 matrix 
 		if isRow:	
 			for col in range(n):
 				matrix[index][col] = None 
@@ -374,21 +420,31 @@ class TSPSolver:
 			for row in range(n):
 				matrix[row][index] = None
 
+	# O(n^2) time complexity to reduce the matrix
+	# O(n^2) space complexity to store and work with the n^2 matrix 
 	def getLowerBound(self, matrix, parentLowerBound, n, row, col, ignoreRowCol=True, markVisitedBeforeReduction=True):
 		costAtCoordinate = matrix[row][col]
 		if markVisitedBeforeReduction:
+			# O(n) to mark the paths as visited (None)
 			# set all values in the row and column to None (so we don't visit them again) 
 			self.markPathVisited(matrix, n, row, col)
+		# O(n^2) to reduce the whole matrix
 		optimizationCost = self.reduceMatrix(matrix, n, ignoreRowCol, row, col)
 		return parentLowerBound + costAtCoordinate + optimizationCost
 
+	# O(n^2) space complexity to store and work with the n^2 matrix
 	def reduceMatrix(self, matrix, n, ignoreRowCol=False, ignoreRow=None, ignoreCol=None):
 		costToReduce = 0
 
+		# O(n^2) time complexity to iterate through each row (n) and do one or both of the following tasks:
+		# 	1. find the smallest element in a row
+		# 	2. reduce each element in the row by an amount
 		for row in range(n):
 			if ignoreRowCol and row == ignoreRow:
 				continue
-
+			
+			# O(n) time to find the smallest element in the row
+			# O(1) space to store the smallest value 
 			rowSmallestValue = self.getSmallestElementInDirection(matrix, n, row, True, ignoreCol)
 
 			# 0 < rowSmallestValue < infinity
@@ -396,19 +452,28 @@ class TSPSolver:
 				self.reduceElementsInDirection(matrix, n, rowSmallestValue, row)
 			costToReduce += rowSmallestValue
 		
+		# O(n^2) time complexity to iterate through each col O(n) and do one or both of the following tasks:
+		# 	1. find the smallest element in the col O(n)
+		# 	2. reduce each element in the col by an amount O(n)
 		for col in range(n):
 			if ignoreRowCol and col == ignoreCol:
 				continue
 
+			# O(n) time to find the smallest element in the col
+			# O(1) space to store the smallest value 
 			colSmallestValue = self.getSmallestElementInDirection(matrix, n, col, False, ignoreRow)
 
 			# 0 < colSmallestValue < infinity
 			if colSmallestValue and colSmallestValue < math.inf:
+				# O(n) time to reduce each element in the col
+				# space complexity - no extra space allocated beyond the n^2 matrix being updated
 				self.reduceElementsInDirection(matrix, n, colSmallestValue, col, False)
 			costToReduce += colSmallestValue
 		
 		return costToReduce
 
+	# O(n) time complexity to go through each element in the row/col of length n
+	# O(n^2) space complexity to store and work with the n^2 matrix
 	def getSmallestElementInDirection(self, matrix, n, index, isRow, ignoreRowCol=None, defaultSmallestValue=0):
 
 		smallestValue = math.inf
@@ -434,8 +499,9 @@ class TSPSolver:
 
 		return smallestValue if flag else defaultSmallestValue
 
+	# O(n) time to go through n (either the row or the column)
+	# O(n^2) space complexity to store and work with the n^2 matrix
 	def reduceElementsInDirection(self, matrix, n, reducer, index, isRow = True):
-
 		if isRow:	
 			for col in range(n):
 				if matrix[index][col] != None and matrix[index][col] < math.inf:
@@ -445,7 +511,7 @@ class TSPSolver:
 				if matrix[row][index] != None and matrix[row][index] < math.inf:
 					matrix[row][index] -= reducer
 
-	# Space complexity - O(n^2) for 2D matrix
+	# Space complexity - O(n^2) to store the 2D matrix
 	# Time complexity - O(n^2) to create the 2D matrix
 	def createCostMatrix(self, cities, n):
 		# O(n) time and space to setup rows
@@ -457,6 +523,7 @@ class TSPSolver:
 				# next two operations take constant time and space
 				iToJCost = cities[row].costTo(cities[col]) if row != col else math.inf
 				matrix[row].append( iToJCost )
+
 		return matrix
 
 	''' <summary>
