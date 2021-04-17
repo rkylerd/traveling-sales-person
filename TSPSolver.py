@@ -116,7 +116,7 @@ class TSPSolver:
 		while (time.time() - start_time) < time_allowance:
 			solution_timer = time.time()
 			new_solution = None
-			# quiteAfterFirstSolution is to give the branchAndBound algorithm an initial bssf
+			# quitAfterFirstSolution is to provide some external algorithm an initial bssf
 			if bssf and quitAfterFirstSolution:
 				break 
 			if len(remaining_starting_cities) == 0:
@@ -181,13 +181,22 @@ class TSPSolver:
 
 		cities = self._scenario.getCities()
 		n = len(cities)
+		# alpha, the exponent that pheromone levels are raised to
+		# alpha increases the chances of a path being selected based off of pheromones
 		a = 1
+		# beta, same as alpha but for distances between cities
 		b = 1
+		# rho, use for evaporating pheromone levels after each iteration 
 		p = 0.2
+		# ants is also referred to as k 
 		ants = n
+		# max iterations after the last improvement
 		max_iterations = 1000
+		# used to determine if using the best closest path or to use probabilstic method of path selection
 		q = 0.5
+		# determines whether to add pheromone levels to the iteration best route or the global best route
 		best_frequency = 0.25
+		# array of distances between cities
 		distances = [[cities[i].costTo(cities[j]) for j in range(n)] for i in range(n)]
 		
 		# Set initial tour cost using the greedy algorithm
@@ -195,7 +204,9 @@ class TSPSolver:
 		BSSF = greedySolution['cost']
 		BSSF_route = [city._index for city in greedySolution['soln'].route] if BSSF < math.inf else []
 
+		# the max bound for pheromone levels
 		t_max = 1 / (p * BSSF)
+		# the lower bound for pheromone levels
 		t_min = t_max / (2 * n)
 		pheromones = [[t_max] * n for _ in range(n)]
 
